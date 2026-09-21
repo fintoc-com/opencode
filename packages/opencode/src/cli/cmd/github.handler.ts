@@ -34,6 +34,7 @@ import { Process } from "@/util/process"
 import { parseGitHubRemote } from "@/util/repository"
 import { Effect } from "effect"
 import { extractResponseText, formatPromptTooLargeError } from "./github.shared"
+import { assertPermissions } from "./github.permissions"
 
 type GitHubAuthor = {
   login: string
@@ -494,7 +495,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
       }
       // Skip permission check and reactions for repo events (no actor to check, no issue to react to)
       if (isUserEvent) {
-        await assertPermissions()
+        await assertPermissions(context, octoRest, process.env["ALLOWED_APP_IDS"])
         await addReaction(commentType)
       }
 
@@ -1160,28 +1161,6 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
         return parseInt(retry.stdout.toString().trim()) > 0
       }
       return parseInt(result.stdout.toString().trim()) > 0
-    }
-
-    async function assertPermissions() {
-      // Only called for non-schedule events, so actor is defined
-      console.log(`Asserting permissions for user ${actor}...`)
-
-      let permission
-      try {
-        const response = await octoRest.repos.getCollaboratorPermissionLevel({
-          owner,
-          repo,
-          username: actor!,
-        })
-
-        permission = response.data.permission
-        console.log(`  permission: ${permission}`)
-      } catch (error) {
-        console.error(`Failed to check permissions: ${error}`)
-        throw new Error(`Failed to check permissions for user ${actor}: ${error}`, { cause: error })
-      }
-
-      if (!["admin", "write"].includes(permission)) throw new Error(`User ${actor} does not have write permissions`)
     }
 
     async function addReaction(commentType?: "issue" | "pr_review") {
