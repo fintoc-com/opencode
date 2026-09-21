@@ -1,0 +1,65 @@
+name: Fintoc CLI
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested binary from the default branch
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository != 'anomalyco/opencode'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-bun
+        with:
+          install-flags: --frozen-lockfile
+      - name: Check permissions and existing GitHub behavior
+        working-directory: packages/opencode
+        run: bun test test/cli/fintoc-install.test.ts test/cli/github-permissions.test.ts test/cli/github-action.test.ts test/cli/github-remote.test.ts
+      - name: Check types
+        working-directory: packages/opencode
+        run: bun typecheck
+      - name: Build and smoke-test the patched CLI
+        run: |
+          export OPENCODE_VERSION=$(jq -er .version github/fintoc.json)
+          bun run --cwd packages/opencode build --single --skip-install --skip-embed-web-ui
+          mkdir -p release
+          tar -czf release/opencode-linux-x64.tar.gz -C packages/opencode/dist/opencode-linux-x64/bin opencode
+          cd release
+          sha256sum opencode-linux-x64.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fintoc-cli
+          path: release/
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fintoc-cli
+          path: release
+      - name: Publish immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -er .version github/fintoc.json)
+          upstream=$(jq -er .upstream github/fintoc.json)
+          printf 'OpenCode %s with explicit GitHub App authorization.\nSource commit: %s\n' "$upstream" "$GITHUB_SHA" > "$RUNNER_TEMP/release.md"
+          gh release create "v$version" release/opencode-linux-x64.tar.gz release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "OpenCode $version" --notes-file "$RUNNER_TEMP/release.md" --prerelease

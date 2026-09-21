@@ -1,0 +1,77 @@
+name: Update Fintoc OpenCode
+
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: fintoc-upstream-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository != 'anomalyco/opencode'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - name: Incorporate the latest upstream release
+        id: update
+        run: |
+          upstream=$(jq -er .upstream github/fintoc.json)
+          latest=$(gh api repos/anomalyco/opencode/releases/latest --jq .tag_name)
+          [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$latest" == "$upstream" ]]; then exit 0; fi
+          branch="update-opencode-${latest#v}"
+          if [[ $(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq length) != 0 ]]; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch https://github.com/anomalyco/opencode.git "refs/tags/$latest:refs/tags/$latest"
+          git switch --create "$branch"
+          git merge --no-commit --no-ff "$latest"
+          jq --arg upstream "$latest" --arg version "${latest#v}-fintoc.1" \
+            '.upstream = $upstream | .version = $version' github/fintoc.json > "$RUNNER_TEMP/fintoc.json"
+          mv "$RUNNER_TEMP/fintoc.json" github/fintoc.json
+          git add github/fintoc.json
+          git commit -m "chore(fork): retain trusted app reviews on $latest"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-bun
+        if: steps.update.outputs.branch != ''
+        with:
+          install-flags: --frozen-lockfile
+      - name: Verify the candidate before opening a PR
+        if: steps.update.outputs.branch != ''
+        run: |
+          bun run --cwd packages/opencode typecheck
+          cd packages/opencode
+          bun test test/cli/fintoc-install.test.ts test/cli/github-permissions.test.ts test/cli/github-action.test.ts test/cli/github-remote.test.ts
+          export OPENCODE_VERSION=$(jq -er .version ../../github/fintoc.json)
+          bun run build --single --skip-install --skip-embed-web-ui
+      - name: Open an update PR
+        if: steps.update.outputs.branch != ''
+        env:
+          UPDATE_BRANCH: ${{ steps.update.outputs.branch }}
+          UPDATE_VERSION: ${{ steps.update.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git push origin "$UPDATE_BRANCH"
+          cat > "$RUNNER_TEMP/update.md" <<'BODY'
+          Updates the upstream CLI while retaining explicit GitHub App authorization and the fork's binary installer.
+
+          Validation: targeted GitHub tests, package typecheck, Linux build, and binary version smoke test passed before opening this PR. These run in the updater because PRs created with GITHUB_TOKEN do not trigger another workflow run.
+
+          After merging, publish the new CLI with the Fintoc CLI workflow, then update consumers to the merged action commit. Existing consumers stay pinned to their current version until updated.
+          BODY
+          gh pr create --repo "$GITHUB_REPOSITORY" --base "$DEFAULT_BRANCH" --head "$UPDATE_BRANCH" \
+            --title "chore(fork): update OpenCode to $UPDATE_VERSION" --body-file "$RUNNER_TEMP/update.md"

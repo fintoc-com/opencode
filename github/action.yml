@@ -5,6 +5,10 @@ branding:
   color: "orange"
 
 inputs:
+  release_repository:
+    description: "Repository containing the patched CLI releases (owner/repo)."
+    required: true
+
   model:
     description: "Model to use"
     required: true
@@ -26,6 +30,11 @@ inputs:
     required: false
     default: "false"
 
+  allowed_app_ids:
+    description: "Comma-separated GitHub App IDs allowed to request runs through issue comments. Other actors must have write or admin access."
+    required: false
+    default: ""
+
   mentions:
     description: "Comma-separated list of trigger phrases (case-insensitive). Defaults to '/opencode,/oc'"
     required: false
@@ -45,20 +54,29 @@ runs:
       id: version
       shell: bash
       run: |
-        VERSION=$(curl -sf https://api.github.com/repos/anomalyco/opencode/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
-        echo "version=${VERSION:-latest}" >> $GITHUB_OUTPUT
+        echo "version=$(jq -er .version "$GITHUB_ACTION_PATH/fintoc.json")" >> "$GITHUB_OUTPUT"
 
     - name: Cache opencode
       id: cache
       uses: actions/cache@v4
       with:
         path: ~/.opencode/bin
-        key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+        key: opencode-fintoc-${{ inputs.release_repository }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
 
     - name: Install opencode
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: curl -fsSL https://opencode.ai/install | bash
+      run: bash "$GITHUB_ACTION_PATH/install-fintoc.sh"
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OPENCODE_RELEASE_REPOSITORY: ${{ inputs.release_repository }}
+        OPENCODE_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+
+    - name: Verify opencode version
+      shell: bash
+      run: test "$("$HOME/.opencode/bin/opencode" --version)" = "$EXPECTED_VERSION"
+      env:
+        EXPECTED_VERSION: ${{ steps.version.outputs.version }}
 
     - name: Add opencode to PATH
       shell: bash
@@ -74,6 +92,7 @@ runs:
         SHARE: ${{ inputs.share }}
         PROMPT: ${{ inputs.prompt }}
         USE_GITHUB_TOKEN: ${{ inputs.use_github_token }}
+        ALLOWED_APP_IDS: ${{ inputs.allowed_app_ids }}
         MENTIONS: ${{ inputs.mentions }}
         VARIANT: ${{ inputs.variant }}
         OIDC_BASE_URL: ${{ inputs.oidc_base_url }}
