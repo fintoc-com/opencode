@@ -4,22 +4,19 @@ import type { Octokit } from "@octokit/rest"
 export async function assertPermissions(
   context: Pick<Context, "actor" | "eventName" | "repo" | "payload">,
   octokit: Octokit,
-  allowedAppIds = "",
+  allowedBots = "",
 ) {
   const { actor } = context
   console.log(`Asserting permissions for user ${actor}...`)
 
-  const comment = context.payload.comment
-  const app = comment?.performed_via_github_app
+  const sender = context.payload.sender
   if (
-    context.eventName === "issue_comment" &&
-    comment?.user?.type === "Bot" &&
-    comment.user.login === actor &&
-    Number.isSafeInteger(app?.id) &&
-    app.id > 0 &&
-    allowedAppIds.split(",").some((id) => id.trim() === String(app.id))
+    ["issue_comment", "pull_request", "pull_request_review_comment"].includes(context.eventName) &&
+    sender?.type === "Bot" &&
+    sender.login === actor &&
+    allowedBots.split(",").some((login) => login.trim() === actor)
   ) {
-    console.log(`  allowed GitHub App: ${app.id}`)
+    console.log(`  allowed bot: ${actor}`)
     return
   }
 

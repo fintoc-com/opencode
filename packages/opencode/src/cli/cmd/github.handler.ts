@@ -495,7 +495,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
       }
       // Skip permission check and reactions for repo events (no actor to check, no issue to react to)
       if (isUserEvent) {
-        await assertPermissions(context, octoRest, process.env["ALLOWED_APP_IDS"])
+        await assertPermissions(context, octoRest, process.env["ALLOWED_BOTS"])
         await addReaction(commentType)
       }
 

@@ -22,7 +22,6 @@ function context(
   input: {
     actor?: string
     eventName?: string
-    app?: number | null
     login?: string
     type?: string
   } = {},
@@ -32,55 +31,75 @@ function context(
     eventName: input.eventName ?? "issue_comment",
     repo: { owner: "example", repo: "project" },
     payload: {
+      sender: { login: input.login ?? "trusted-agent[bot]", type: input.type ?? "Bot" },
       comment: {
         id: 1,
-        user: { login: input.login ?? "trusted-agent[bot]", type: input.type ?? "Bot" },
-        performed_via_github_app: input.app === null ? null : { id: input.app ?? 123 },
+        user: { login: "trusted-agent[bot]", type: "Bot" },
       },
     },
   }
 }
 
 describe("GitHub caller permissions", () => {
-  test("accepts a configured app without consulting collaborator permissions", async () => {
-    const count = requests.length
-    await assertPermissions(context(), octokit, "456, 123")
-    expect(requests.length).toBe(count)
-  })
+  test.each(["issue_comment", "pull_request", "pull_request_review_comment"])(
+    "accepts a configured bot triggering %s without consulting collaborator permissions",
+    async (eventName) => {
+      const event = context({ eventName })
+      if (eventName === "pull_request") {
+        delete event.payload.comment
+        event.payload.pull_request = { number: 1, user: { login: "developer", type: "User" } }
+      }
+      const count = requests.length
+      await assertPermissions(event, octokit, "another-agent[bot], trusted-agent[bot]")
+      expect(requests.length).toBe(count)
+    },
+  )
 
-  test.each([undefined, "", "456"])("rejects an app absent from configuration %p", async (allowed) => {
-    await rejects(assertPermissions(context(), octokit, allowed), {
-      message: "User trusted-agent[bot] does not have write permissions",
-    })
-  })
+  test.each([undefined, "", "another-agent[bot]", "*", "trusted-agent", "other-trusted-agent[bot]"])(
+    "rejects a bot absent from configuration %p",
+    async (allowed) => {
+      await rejects(assertPermissions(context(), octokit, allowed), {
+        message: "User trusted-agent[bot] does not have write permissions",
+      })
+    },
+  )
 
   test.each(["developer", "owner"])("preserves collaborator access for %s", async (actor) => {
-    await assertPermissions(context({ actor, login: actor, type: "User", app: null }), octokit, "123")
+    await assertPermissions(context({ actor, login: actor, type: "User" }), octokit, "trusted-agent[bot]")
     expect(requests.at(-1)).toBe(actor)
   })
 
   test("rejects an unauthorized human", async () => {
     await rejects(
-      assertPermissions(context({ actor: "outsider", login: "outsider", type: "User", app: null }), octokit, "123"),
+      assertPermissions(context({ actor: "outsider", login: "outsider", type: "User" }), octokit, "outsider"),
       { message: "User outsider does not have write permissions" },
     )
   })
 
-  test.each([
-    { app: null },
-    { app: 0 },
-    { actor: "outsider" },
-    { type: "User" },
-    { eventName: "pull_request" },
-    { eventName: "issues" },
-  ])("does not bypass collaborator checks with mismatched event metadata %p", async (input) => {
-    await rejects(assertPermissions(context(input), octokit, "123"), /does not have write permissions/)
+  test.each([{ actor: "outsider" }, { login: "another-agent[bot]" }, { type: "User" }, { eventName: "issues" }])(
+    "does not bypass collaborator checks with mismatched event metadata %p",
+    async (input) => {
+      await rejects(assertPermissions(context(input), octokit, "trusted-agent[bot]"), /does not have write permissions/)
+    },
+  )
+
+  test("requires sender metadata even when the comment author is trusted", async () => {
+    const event = context()
+    delete event.payload.sender
+    await rejects(assertPermissions(event, octokit, "trusted-agent[bot]"), /does not have write permissions/)
   })
 
-  test("does not treat an app name mentioned in the comment as authorization", async () => {
-    const event = context({ app: null })
-    event.payload.comment!.body = "fin review from app 123"
-    await rejects(assertPermissions(event, octokit, "123"), /does not have write permissions/)
+  test("does not authorize an outsider updating a trusted bot's PR", async () => {
+    const event = context({ eventName: "pull_request", actor: "outsider", login: "outsider", type: "User" })
+    delete event.payload.comment
+    event.payload.pull_request = { number: 1, user: { login: "trusted-agent[bot]", type: "Bot" } }
+    await rejects(assertPermissions(event, octokit, "trusted-agent[bot]"), /does not have write permissions/)
+  })
+
+  test("does not treat a bot name mentioned in the comment as authorization", async () => {
+    const event = context({ actor: "outsider", login: "outsider", type: "User" })
+    event.payload.comment!.body = "fin review from trusted-agent[bot]"
+    await rejects(assertPermissions(event, octokit, "trusted-agent[bot]"), /does not have write permissions/)
   })
 
   test("retains permission lookup failures", async () => {

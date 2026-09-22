@@ -30,8 +30,8 @@ inputs:
     required: false
     default: "false"
 
-  allowed_app_ids:
-    description: "Comma-separated GitHub App IDs allowed to request runs through issue comments. Other actors must have write or admin access."
+  allowed_bots:
+    description: "Comma-separated bot logins allowed to trigger pull request and comment runs. Other actors must have write or admin access."
     required: false
     default: ""
 
@@ -92,7 +92,7 @@ runs:
         SHARE: ${{ inputs.share }}
         PROMPT: ${{ inputs.prompt }}
         USE_GITHUB_TOKEN: ${{ inputs.use_github_token }}
-        ALLOWED_APP_IDS: ${{ inputs.allowed_app_ids }}
+        ALLOWED_BOTS: ${{ inputs.allowed_bots }}
         MENTIONS: ${{ inputs.mentions }}
         VARIANT: ${{ inputs.variant }}
         OIDC_BASE_URL: ${{ inputs.oidc_base_url }}

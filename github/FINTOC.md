@@ -1,12 +1,12 @@
 # Fintoc OpenCode fork
 
-This fork lets configured GitHub Apps request reviews through `issue_comment` while preserving upstream's collaborator checks for other callers. The model, prompt, PR context, reactions, and review execution remain in upstream OpenCode.
+This fork lets configured bots trigger reviews through `pull_request`, `issue_comment`, and `pull_request_review_comment` while preserving upstream's collaborator checks for other callers. The model, prompt, PR context, reactions, and review execution remain in upstream OpenCode.
 
 ## Authorization
 
-Set `allowed_app_ids` to a comma-separated list of GitHub App IDs in the trusted workflow. The default is empty. The CLI accepts the exception only when GitHub's event says the comment was created by a Bot, the comment author matches the triggering actor, and `comment.performed_via_github_app.id` is in that list. Comment text and repository configuration cannot grant this exception. Human users continue to need `write` or `admin` collaborator permission. Other event types retain upstream behavior.
+Set `allowed_bots` to a comma-separated list of exact bot logins in the trusted workflow. The default is empty. The CLI accepts the exception only when GitHub's event identifies the sender as a Bot, the sender matches the triggering actor, and that login is in the list. The PR author and comment text cannot grant this exception. Human users continue to need `write` or `admin` collaborator permission, even if their login is listed. Other event types retain upstream behavior.
 
-The CLI reads `ALLOWED_APP_IDS`; the action passes its `allowed_app_ids` input. Both token modes use the same authorization rule. App installation IDs and bot user IDs are different identifiers and must not be used here.
+The CLI reads `ALLOWED_BOTS`; the action passes its `allowed_bots` input. Both token modes use the same authorization rule. Use full GitHub logins, including `[bot]`; wildcards and partial matches are not supported. Configure the list centrally in Hermes; caller repos and agents keep their existing PR and `fin review` flows.
 
 ## Build and release
 
@@ -25,7 +25,7 @@ Example consumer configuration (replace the action commit):
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   with:
     release_repository: fintoc-com/opencode
-    allowed_app_ids: "4551783,1658531"
+    allowed_bots: "fin-tank-agent[bot],linear-code[bot]"
     use_github_token: true
     model: openai/gpt-5.4
     share: false
